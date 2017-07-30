@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>BoardGameGeek Wishlist Helper (Gen Con 17)</title>
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.2.2/jquery.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"></script>
+  <script>
+var genConBooths = {};
+var wishlistItems = [];
+const BGG_REQUEST_DELAY_MILLIS = 5 * 1000;
+const STATUS_MESSAGES = {
+  "wanttobuy": "Want to buy",
+  "wanttoplay": "Want to play",
+  "wishlist-1": "Wishlist (Must have)",
+  "wishlist-2": "Wishlist (Love to have)",
+  "wishlist-3": "Wishlist (Like to have)",
+  "wishlist-4": "Wishlist (Thinking about it)",
+  "wishlist-5": "Wishlist (Don't buy this)"
+}
+
+function parseCollectionItem(rawItem) {
+  var rawItemWrapped = $(rawItem);
+  var item = {
+    "id": rawItemWrapped.attr("objectid"),
+    "name": $("name", rawItemWrapped).text(),
+    "thumbnail": $("thumbnail", rawItemWrapped).text(),
+    "type": "",
+    "isWishlist": false
+  };
+  var status = $("status", rawItemWrapped);
+  
+  if (status.attr("wishlist") == "1") {
+    item.type = "wishlist-" + status.attr("wishlistpriority");
+    item.isWishlist = true;
+  } else if (status.attr("wanttobuy") == "1") {
+    item.type = "wanttobuy";
+    item.isWishlist = true;
+  } else if (status.attr("wanttoplay") == "1") {
+    item.type = "wanttoplay";
+    item.isWishlist = true;
+  }
+  
+  return item;
+}
+
+function fetchPublishers(item, publisherList) {
+  var itemUrl = "https://boardgamegeek.com/xmlapi2/thing?id=" + item.id;
+  bggRequest(itemUrl, function (itemDetails) {
+    $("link[type='boardgamepublisher']", itemDetails).map(function (idx, link) {
+      var publisher = $(link).attr("value");
+      var normalizedPublisher =
+        publisher.replace(/[^A-Za-z ]/g, '').toLowerCase();
+      var booths = genConBooths[normalizedPublisher];
+      var publisherElement = $("<li>");
+      
+      if (booths) {
+        if (booths.length > 1) {
+          publisherElement.text(
+            publisher + " (exhibit hall booths " + booths.join(", ") + ")"
+          );
+        } else {
+          publisherElement.text(
+            publisher + " (exhibit hall booth " + booths.join(", ") + ")"
+          );
+        }
+        publisherList.append(publisherElement);
+      }
+    });
+    
+    $('.loading', publisherList).remove();
+  });
+}
+
+function fetchAllPublishers() {
+  var nextItem = wishlistItems.shift();
+  
+  if (nextItem) {
+    fetchPublishers(nextItem.item, nextItem.publisherList);
+    setTimeout(fetchAllPublishers, BGG_REQUEST_DELAY_MILLIS);
+  }
+}
+
+function renderCollectionItem(item) {
+  var publishers = $("<ul>").addClass("item-publishers");
+  var node = $("<div>")
+      .addClass("collection-item")
+      .addClass(item.type)
+      .attr("id", "item-" + item.id)
+      .append(
+        $("<img>")
+          .addClass("item-thumbnail")
+          .attr("src", item.thumbnail),
+        $("<p>")
+          .addClass("item-name")
+          .text(item.name),
+        $("<p>")
+          .addClass("item-type")
+          .text(STATUS_MESSAGES[item.type]),
+        publishers.append(
+          '<li class="loading"><img src="spinner.gif"> Loading Publishers...</li>'
+        ),
+        $("<div>").addClass("clearfix")
+      );
+  
+  wishlistItems.push({
+    "item": item,
+    "publisherList": publishers
+  })
+  
+  return node;
+}
+
+function getBGGCollection(username) {
+  var baseCollectionUrl = "https://boardgamegeek.com/xmlapi2/collection?username=" + username,
+    gameCollectionUrl = baseCollectionUrl + "&subtype=boardgame";
+  
+  bggRequest(gameCollectionUrl, function (collection) {
+    var list = $("#bgg-collection");
+    $("item", collection).each(function (idx, rawItem) {
+      var item = parseCollectionItem(rawItem);
+      if (item.isWishlist) {
+        list.append(renderCollectionItem(item));
+      }
+    });
+    
+    $("#title").css({ "visibility": "visible" });
+    $("#bgg-identity-form").remove();
+    
+    setTimeout(fetchAllPublishers, BGG_REQUEST_DELAY_MILLIS);
+  });
+}
+
+function bggRequest(url, successCallback) {
+  console.log("Initiating BGG API request.");
+  $.ajax({
+    "url": url,
+    "dataType": "xml",
+    "statusCode": {
+      200: successCallback,
+      202: function () {
+        console.log("Request accepted. Checking for response in 5 seconds.");
+        setTimeout(bggRequest, BGG_REQUEST_DELAY_MILLIS, url, successCallback);
+      }
+    },
+    "error": function (xhr, errType, message) {
+      console.log(message);
+      $("errors").append(
+        $("<p>").text("Request failed: " + message)
+      );
+    }
+  });
+}
+
+$(document).ready(function () {
+  $.ajax({
+    "url": "exhibitor-booths.json",
+    "dataType": "json",
+    "success": function (booths) {
+      console.log("Got booths:");
+      console.log(booths);
+      genConBooths = booths;
+    }
+  });
+  
+  $("#bgg-identity-commit").on("click", function () {
+    var username = $("#bgg-identity-username").val();
+    console.log("BGG Username: " + username);
+    getBGGCollection(username);
+  });
+});
+  </script>
+  <style>
+body {
+  font-family: "Helvetica Neue", sans-serif;
+  font-weight: 200;
+  font-size: 12px;
+}
+
+#bgg-identity-form {
+  text-align: center;
+  margin-top: 5em;
+}
+
+#bgg-identity-form input {
+  font-size: 2em;
+  padding: 7px;
+  border: none;
+  border-bottom: 1px solid black;
+}
+
+#bgg-identity-form button {
+  font-size: 2em;
+  padding: 10px;
+}
+
+#title {
+  text-align: center;
+  visibility: hidden;
+  font-size: 3em;
+}
+
+#errors p {
+  padding: 1em;
+  border: 2px solid #600;
+  color: #600;
+  background-color: fcc;
+}
+
+#bgg-collection {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: stretch;
+  align-content: flex-start;
+}
+
+.collection-item {
+  border: 1px solid #ccc;
+  background-color: #eee;
+  margin: 1em;
+  padding: 1em;
+  width: 40%;
+  page-break-inside: avoid;
+}
+
+.collection-item .item-thumbnail {
+  float: left;
+  max-width: 4em;
+}
+
+.collection-item p {
+  margin-top: 0;
+  margin-bottom: 0;
+  margin-left: 5em;
+  margin-right: 0;
+}
+
+.collection-item .item-name {
+  font-weight: 400;
+  font-size: 1.25em;
+  margin-left: 4em;
+}
+
+.collection-item .item-publishers {
+  list-style: none;
+  margin-top: 0;
+  margin-bottom: 0;
+  margin-left: 5em;
+  margin-right: 0;
+  padding: 0;
+}
+
+.collection-item .item-publishers li {
+  display: inline;
+}
+
+.collection-item .item-publishers li:after {
+  content: ", ";
+}
+
+.collection-item .item-publishers li:last-child:after {
+  content: "";
+}
+
+li.loading img {
+  height: 1em;
+}
+
+.clearfix {
+  clear: both;
+}
+  </style>
+</head>
+<body>
+  <div id="bgg-identity-form">
+    <p>
+      <input type="text" id="bgg-identity-username" placeholder="BGG Username">
+    </p>
+    <p>
+      <button id="bgg-identity-commit">Generate Wishlist</button>
+    </p>
+  </div>
+  <div id="errors"></div>
+  <h1 id="title">Wishlist</h1>
+  <div id="bgg-collection"></div>
+</body>
+</html>
