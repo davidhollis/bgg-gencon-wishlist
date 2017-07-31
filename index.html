@@ -135,6 +135,7 @@ function bggRequest(url, successCallback) {
   $.ajax({
     "url": url,
     "dataType": "xml",
+    "crossDomain": true,
     "statusCode": {
       200: successCallback,
       202: function () {
